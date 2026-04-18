@@ -72,52 +72,40 @@ jobs:
                 print "    \"" module "\","
                 added=1
               }
-            }
-            { print }
-          ' common/modules.bzl
-          
-      - name: Prepare module list for legacy builds
-        if: ${{ github.event.inputs.android_version <= 13 }}
-        run: |
-          cd android-kernel
-          echo "drivers/kerneldriver/${{ github.event.inputs.driver_name }}" >> common/android/gki_${{ github.event.inputs.target_arch }}_modules
-      - name: Increase stack frame size limit
-        run: |
-          cd android-kernel
-          find . -type f -name "Makefile*" -exec sed -i 's/-Wframe-larger-than=[0-9]*/-Wframe-larger-than=4096/g' {} +
-          grep -q "FRAME_WARN" common/Makefile || echo 'KBUILD_CFLAGS += -Wframe-larger-than=4096' >> common/Makefile
+name: Build .ko Only
 
-      - name: Install dependencies
+on:
+  workflow_dispatch:
+
+jobs:
+  build-ko:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential flex bison libssl-dev libelf-dev bc python-is-python3
-      - name: Fix missing kprobe symbols for Android 13
-        if: ${{ github.event.inputs.android_version == 13 }}
+          sudo apt update
+          sudo apt install -y git make gcc flex bison bc libssl-dev
+
+      - name: Download kernel headers
         run: |
-          cd android-kernel
-          for symbol in register_kprobe unregister_kprobe; do
-            grep -q "$symbol" common/android/abi_gki_${{ github.event.inputs.target_arch }} || \
-            echo "$symbol" >> common/android/abi_gki_${{ github.event.inputs.target_arch }}
-          done
-          sed -i '/EXPORT_SYMBOL(unregister_kprobe);/a EXPORT_SYMBOL(register_kprobe);' common/kernel/kprobes.c
-          
-      - name: Build kernel module
+          git clone --depth=1 --branch android14-6.1 https://android.googlesource.com/kernel/common.git kernel_source
+          cd kernel_source
+          make defconfig
+          make prepare
+          make modules_prepare
+          cd ..
+
+      - name: Build driver
         run: |
-          cd android-kernel
-          if [ ${{ github.event.inputs.android_version }} -le 13 ]; then
-            BUILD_CONFIG=common/build.config.gki.${{ github.event.inputs.target_arch }} LTO=thin build/build.sh -j32
-            OUTPUT_PATH="out/android${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}/dist"
-          else
-            echo "Using Bazel build system for Android ${{ github.event.inputs.android_version }}"
-            tools/bazel run //common:kernel_${{ github.event.inputs.target_arch }}_dist
-            OUTPUT_PATH="out/kernel_${{ github.event.inputs.target_arch }}"
-          fi
-          echo "OUTPUT_PATH=$OUTPUT_PATH" >> $GITHUB_ENV
-        continue-on-error: true
-      
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4.6.2
+          cd code
+          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-android-
+          ls -la *.ko
+
+      - name: Upload .ko
+        uses: actions/upload-artifact@v4
         with:
-          name: kernel-driver-${{ github.event.inputs.target_arch }}
-          path: |
-            android-kernel/${{ env.OUTPUT_PATH }}
+          name: mydriver-ko
+          path: code/*.ko
