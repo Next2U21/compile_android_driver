@@ -41,71 +41,38 @@ jobs:
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}
           repo sync -j$(nproc) -c --no-tags --optimized-fetch --force-sync
 
-      - name: Copy kerneldriver
-        run: |
-          cd android-kernel
-          cp -r ../kerneldriver common/drivers
-
-      - name: Modify Makefile
-        run: |
-          cd android-kernel
-          echo "obj-y += kerneldriver/" >> common/drivers/Makefile
-
-      - name: Add module to GKI modules list
-        if: ${{ github.event.inputs.android_version > 13 }}
-        run: |
-          cd android-kernel
-          MODULE_NAME="drivers/kerneldriver/${{ github.event.inputs.driver_name }}"
-          
-          awk -i inplace -v module="$MODULE_NAME" '
-            BEGIN { added=0 }
-            /_COMMON_GKI_MODULES_LIST = \[/ { in_list=1 }
-            in_list && /\]/ {
-              if (!added) {
-                print "    \"" module "\","
-                added=1
-              }
-              in_list=0
-            }
-            in_list && !added {
-              if (module < $0) {
-                print "    \"" module "\","
-                added=1
-              }
-name: Build .ko Only
+name: Build Kernel Module
 
 on:
   workflow_dispatch:
 
 jobs:
-  build-ko:
-    runs-on: ubuntu-22.04
+  build:
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Install tools
-        run: |
-          sudo apt update
-          sudo apt install -y git make gcc flex bison bc libssl-dev
+    - name: Setup build environment
+      run: |
+        sudo apt update
+        sudo apt install -y bc bison flex libssl-dev make
 
-      - name: Download kernel headers
-        run: |
-          git clone --depth=1 --branch android14-6.1 https://android.googlesource.com/kernel/common.git kernel_source
-          cd kernel_source
-          make defconfig
-          make prepare
-          make modules_prepare
-          cd ..
+    - name: Download kernel source
+      run: |
+        git clone --depth=1 https://github.com/OnePlusOSS/android_kernel_oneplus_sm8650.git -b oneplus/sm8650 kernel
+        cd kernel
+        make ARCH=arm64 olddefconfig
+        make ARCH=arm64 prepare
+        make ARCH=arm64 scripts
 
-      - name: Build driver
-        run: |
-          cd code
-          make ARCH=arm64 CROSS_COMPILE=aarch64-linux-android-
-          ls -la *.ko
+    - name: Build module
+      run: |
+        cd code
+        make -C ../kernel ARCH=arm64 CROSS_COMPILE=aarch64-linux-android- M=$PWD modules
 
-      - name: Upload .ko
-        uses: actions/upload-artifact@v4
-        with:
-          name: mydriver-ko
-          path: code/*.ko
+    - name: Upload module
+      uses: actions/upload-artifact@v4
+      with:
+        name: mydriver
+        path: code/*.ko
